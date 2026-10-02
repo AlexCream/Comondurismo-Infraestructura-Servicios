@@ -1,0 +1,78 @@
+# Infraestructura de DESARROLLO del servicio de identidad: PostgreSQL, Redis y un
+# servidor de correo falso (Mailpit).
+#
+# Esta carpeta es independiente del servicio: se puede mover fuera del repositorio.
+# El servicio (compose.yml en la raiz del repo) NO depende de estos contenedores; los
+# encuentra por las variables DATABASE_URL, REDIS_ADDR y SMTP_HOST de su .env.
+#
+#   cp .env.example .env        # y define las contrasenas
+#   docker compose up -d
+#
+# En produccion estas piezas se reemplazan por servicios administrados y solo cambian
+# los valores de las variables de entorno del servicio.
+
+name: comondurismo-infra
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: comondurismo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      # Solo escucha en tu maquina (127.0.0.1): no se expone a la red.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - comondurismo-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: comondurismo-redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    networks:
+      - comondurismo-network
+
+  # Servidor SMTP de desarrollo: captura los correos sin enviarlos a nadie.
+  # Interfaz web: http://localhost:8025   |   SMTP: puerto 1025
+  mailpit:
+    image: axllent/mailpit
+    container_name: comondurismo-mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025"
+    networks:
+      - comondurismo-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  # Red compartida con el servicio: tiene un nombre fijo para que otros compose
+  # (el del servicio, el del contenido...) se conecten a ella como "externa".
+  comondurismo-network:
+    name: comondurismo-network
+    driver: bridge
