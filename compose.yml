@@ -22,11 +22,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Base del servicio de contenido; la crea postgres/initdb la primera vez que arranca.
+      POSTGRES_CONTENT_DB: ${POSTGRES_CONTENT_DB:-comondurismo_content}
     ports:
       # Solo escucha en tu maquina (127.0.0.1): no se expone a la red.
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -54,6 +57,27 @@ services:
     networks:
       - comondurismo-network
 
+  # Almacenamiento de objetos compatible con S3 (RustFS) para las imagenes y videos del
+  # servicio de contenido. En produccion se reemplaza por S3 o similar: solo cambian las
+  # variables OBJECT_STORE_* del servicio. El servicio crea el bucket si
+  # OBJECT_STORE_CREATE_BUCKET=true. Los archivos se ven a traves del gateway:
+  # http://localhost:8000/media/...    Consola web: http://localhost:9001
+  storage:
+    image: rustfs/rustfs:1.0.1
+    container_name: comondurismo-storage
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY}
+      RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS: "http://localhost:${S3_CONSOLE_PORT:-9001}"
+    ports:
+      - "127.0.0.1:${S3_API_PORT:-9000}:9000"
+      - "127.0.0.1:${S3_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - storage_data:/data
+    networks:
+      - comondurismo-network
+
   # Servidor SMTP de desarrollo: captura los correos sin enviarlos a nadie.
   # Interfaz web: http://localhost:8025   |   SMTP: puerto 1025
   mailpit:
@@ -66,9 +90,47 @@ services:
     networks:
       - comondurismo-network
 
+  # Puerta de entrada: nginx reparte las peticiones a cada servicio segun la ruta
+  # (ver gateway/ y la seccion "Gateway" del README). No depende de que los servicios
+  # esten arriba: los resuelve por nombre en cada peticion.
+  #   Salud del gateway: http://localhost:8000/gateway/health
+  #   API de identidad:  http://localhost:8000/api/v1/...
+  gateway:
+    image: nginx:1.28-alpine
+    container_name: comondurismo-gateway
+    restart: unless-stopped
+    environment:
+      # Nombre con el que se responde. "_" = cualquiera (sirve sin dominio, por IP o localhost).
+      GATEWAY_SERVER_NAME: ${GATEWAY_SERVER_NAME:-_}
+      # Solo se sustituyen las variables GATEWAY_* en las plantillas (las $variables de
+      # nginx quedan intactas).
+      NGINX_ENVSUBST_FILTER: ^GATEWAY_
+    ports:
+      # Por defecto solo en tu maquina. Para exponerlo en la red / internet:
+      # GATEWAY_BIND=0.0.0.0 (y en produccion GATEWAY_HTTP_PORT=80).
+      - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_HTTP_PORT:-8000}:80"
+      # Con HTTPS (ver README, "Cuando tengas dominio"): descomenta esta linea y la de certs.
+      # - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./gateway/templates:/etc/nginx/templates:ro
+      - ./gateway/locations:/etc/nginx/locations:ro
+      - ./gateway/snippets:/etc/nginx/snippets:ro
+      # - ./gateway/certs:/etc/nginx/certs:ro
+    extra_hosts:
+      # Para proxiar al frontend de desarrollo que corre en tu maquina (Vite).
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/gateway/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - comondurismo-network
+
 volumes:
   postgres_data:
   redis_data:
+  storage_data:
 
 networks:
   # Red compartida con el servicio: tiene un nombre fijo para que otros compose
