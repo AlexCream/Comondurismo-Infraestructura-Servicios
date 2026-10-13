@@ -1,9 +1,16 @@
-# Infraestructura de DESARROLLO del servicio de identidad: PostgreSQL, Redis y un
-# servidor de correo falso (Mailpit).
+# Infraestructura de DESARROLLO de Comondurismo: PostgreSQL, Redis, almacenamiento de
+# objetos compatible con S3 (RustFS) y un servidor de correo falso (Mailpit).
 #
-# Esta carpeta es independiente del servicio: se puede mover fuera del repositorio.
-# El servicio (compose.yml en la raiz del repo) NO depende de estos contenedores; los
-# encuentra por las variables DATABASE_URL, REDIS_ADDR y SMTP_HOST de su .env.
+# Esta carpeta es independiente de los servicios: se puede mover fuera del repositorio.
+# Los servicios (compose.yml en la raiz de cada repo) NO dependen de estos contenedores; los
+# encuentran por las variables DATABASE_URL, REDIS_ADDR, SMTP_HOST... de su .env.
+#
+# PUERTOS: todo lo de Comondurismo usa el rango 50300-50400 de la maquina anfitriona (ver el
+# documento "Puertos_y_Red" en la boveda de Obsidian). Dentro de la red de Docker cada pieza
+# conserva su puerto habitual (postgres:5432, redis:6379, storage:9000...).
+#
+# NGINX no esta aqui: no es un servicio de Comondurismo. Lo configura el administrador del
+# servidor (guia "Despliegue_y_Nginx" en la boveda).
 #
 #   cp .env.example .env        # y define las contrasenas
 #   docker compose up -d
@@ -26,7 +33,7 @@ services:
       POSTGRES_CONTENT_DB: ${POSTGRES_CONTENT_DB:-comondurismo_content}
     ports:
       # Solo escucha en tu maquina (127.0.0.1): no se expone a la red.
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-50300}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
@@ -44,7 +51,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
     ports:
-      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-50301}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -60,8 +67,10 @@ services:
   # Almacenamiento de objetos compatible con S3 (RustFS) para las imagenes y videos del
   # servicio de contenido. En produccion se reemplaza por S3 o similar: solo cambian las
   # variables OBJECT_STORE_* del servicio. El servicio crea el bucket si
-  # OBJECT_STORE_CREATE_BUCKET=true. Los archivos se ven a traves del gateway:
-  # http://localhost:8000/media/...    Consola web: http://localhost:9001
+  # OBJECT_STORE_CREATE_BUCKET=true y lo deja de lectura publica.
+  #   API S3 (y archivos publicos): http://localhost:50304/<bucket>/<clave>
+  #   Consola web:                  http://localhost:50305
+  # En produccion el administrador publica el bucket en /media/ con nginx.
   storage:
     image: rustfs/rustfs:1.0.1
     container_name: comondurismo-storage
@@ -69,61 +78,27 @@ services:
     environment:
       RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY}
       RUSTFS_SECRET_KEY: ${S3_SECRET_KEY}
-      RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS: "http://localhost:${S3_CONSOLE_PORT:-9001}"
+      RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS: "http://localhost:${S3_CONSOLE_PORT:-50305}"
     ports:
-      - "127.0.0.1:${S3_API_PORT:-9000}:9000"
-      - "127.0.0.1:${S3_CONSOLE_PORT:-9001}:9001"
+      # La API S3 sirve tambien los archivos publicos (imagenes de las fichas, logo de los
+      # correos). Solo en tu maquina por defecto; para probar con otros equipos del
+      # laboratorio pon S3_BIND_ADDRESS=0.0.0.0 en el .env. La consola siempre es local.
+      - "${S3_BIND_ADDRESS:-127.0.0.1}:${S3_API_PORT:-50304}:9000"
+      - "127.0.0.1:${S3_CONSOLE_PORT:-50305}:9001"
     volumes:
       - storage_data:/data
     networks:
       - comondurismo-network
 
   # Servidor SMTP de desarrollo: captura los correos sin enviarlos a nadie.
-  # Interfaz web: http://localhost:8025   |   SMTP: puerto 1025
+  # Interfaz web: http://localhost:50303   |   SMTP: puerto 50302
   mailpit:
     image: axllent/mailpit
     container_name: comondurismo-mailpit
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025"
-      - "127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025"
-    networks:
-      - comondurismo-network
-
-  # Puerta de entrada: nginx reparte las peticiones a cada servicio segun la ruta
-  # (ver gateway/ y la seccion "Gateway" del README). No depende de que los servicios
-  # esten arriba: los resuelve por nombre en cada peticion.
-  #   Salud del gateway: http://localhost:8000/gateway/health
-  #   API de identidad:  http://localhost:8000/api/v1/...
-  gateway:
-    image: nginx:1.28-alpine
-    container_name: comondurismo-gateway
-    restart: unless-stopped
-    environment:
-      # Nombre con el que se responde. "_" = cualquiera (sirve sin dominio, por IP o localhost).
-      GATEWAY_SERVER_NAME: ${GATEWAY_SERVER_NAME:-_}
-      # Solo se sustituyen las variables GATEWAY_* en las plantillas (las $variables de
-      # nginx quedan intactas).
-      NGINX_ENVSUBST_FILTER: ^GATEWAY_
-    ports:
-      # Por defecto solo en tu maquina. Para exponerlo en la red / internet:
-      # GATEWAY_BIND=0.0.0.0 (y en produccion GATEWAY_HTTP_PORT=80).
-      - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_HTTP_PORT:-8000}:80"
-      # Con HTTPS (ver README, "Cuando tengas dominio"): descomenta esta linea y la de certs.
-      # - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_HTTPS_PORT:-8443}:443"
-    volumes:
-      - ./gateway/templates:/etc/nginx/templates:ro
-      - ./gateway/locations:/etc/nginx/locations:ro
-      - ./gateway/snippets:/etc/nginx/snippets:ro
-      # - ./gateway/certs:/etc/nginx/certs:ro
-    extra_hosts:
-      # Para proxiar al frontend de desarrollo que corre en tu maquina (Vite).
-      - "host.docker.internal:host-gateway"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/gateway/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-50302}:1025"
+      - "127.0.0.1:${MAILPIT_UI_PORT:-50303}:8025"
     networks:
       - comondurismo-network
 
