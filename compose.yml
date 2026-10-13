@@ -1,24 +1,43 @@
-# Infraestructura de DESARROLLO de Comondurismo: PostgreSQL, Redis, almacenamiento de
-# objetos compatible con S3 (RustFS) y un servidor de correo falso (Mailpit).
+# Sistema Comondurismo completo, a partir de ESTE repositorio (no hace falta descargar ningun otro):
 #
-# Esta carpeta es independiente de los servicios: se puede mover fuera del repositorio.
-# Los servicios (compose.yml en la raiz de cada repo) NO dependen de estos contenedores; los
-# encuentran por las variables DATABASE_URL, REDIS_ADDR, SMTP_HOST... de su .env.
+#   infraestructura    PostgreSQL/PostGIS, Redis y almacenamiento de objetos compatible con S3 (RustFS)
+#   identity           servicio de identidad  (puerto 50310)
+#   content            servicio de contenido  (puerto 50311)
+#   mailpit            correo falso, SOLO desarrollo (perfil "dev")
 #
-# PUERTOS: todo lo de Comondurismo usa el rango 50300-50400 de la maquina anfitriona (ver el
-# documento "Puertos_y_Red" en la boveda de Obsidian). Dentro de la red de Docker cada pieza
-# conserva su puerto habitual (postgres:5432, redis:6379, storage:9000...).
+# Los servicios NO se compilan aqui: se construyen copiando los binarios de bin/ a una imagen
+# minima (Dockerfile). Los binarios los genera scripts/compilar-binarios.sh en la maquina de
+# desarrollo y se versionan en este repositorio.
 #
-# NGINX no esta aqui: no es un servicio de Comondurismo. Lo configura el administrador del
-# servidor (guia "Despliegue_y_Nginx" en la boveda).
+# PUERTOS: todo lo de Comondurismo usa el rango 50300-50400 de la maquina anfitriona (nota
+# "Puertos_y_Red" de la boveda de Obsidian). Por defecto todo escucha solo en 127.0.0.1: el acceso
+# desde internet lo da el nginx del administrador del servidor (NO es un servicio de Comondurismo;
+# guia "Despliegue_y_Nginx" en la boveda).
 #
-#   cp .env.example .env        # y define las contrasenas
+# Primera vez (ver README.md):
+#   cp .env.example .env                                  # secretos de la infraestructura
+#   cp env/identity.env.example env/identity.env          # configuracion de identidad
+#   cp env/content.env.example  env/content.env           # configuracion de contenido
+#   docker compose build
+#   docker compose run --rm identity /genkey > secrets/jwt-private.pem
+#   docker compose up -d postgres redis storage
+#   docker compose run --rm identity /migrate up
+#   docker compose run --rm content  /migrate up
 #   docker compose up -d
-#
-# En produccion estas piezas se reemplazan por servicios administrados y solo cambian
-# los valores de las variables de entorno del servicio.
 
 name: comondurismo-infra
+
+# Endurecimiento y red comunes a los dos servicios: sistema de archivos de solo lectura, sin
+# privilegios extra y sin capacidades de Linux.
+x-servicio: &servicio
+  restart: unless-stopped
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  networks:
+    - comondurismo-network
 
 services:
   postgres:
@@ -65,8 +84,8 @@ services:
       - comondurismo-network
 
   # Almacenamiento de objetos compatible con S3 (RustFS) para las imagenes y videos del
-  # servicio de contenido. En produccion se reemplaza por S3 o similar: solo cambian las
-  # variables OBJECT_STORE_* del servicio. El servicio crea el bucket si
+  # servicio de contenido. En produccion se puede reemplazar por S3 o similar: solo cambian las
+  # variables OBJECT_STORE_* de contenido. El servicio crea el bucket si
   # OBJECT_STORE_CREATE_BUCKET=true y lo deja de lectura publica.
   #   API S3 (y archivos publicos): http://localhost:50304/<bucket>/<clave>
   #   Consola web:                  http://localhost:50305
@@ -90,9 +109,80 @@ services:
     networks:
       - comondurismo-network
 
-  # Servidor SMTP de desarrollo: captura los correos sin enviarlos a nadie.
+  # ---- Servicio de identidad ----
+  # Cuentas, autenticacion, autorizacion y perfil. Emite los tokens (JWT Ed25519).
+  # Configuracion: env/identity.env (plantilla env/identity.env.example). Las conexiones a
+  # PostgreSQL, Redis y el puerto se fijan aqui a partir de .env y tienen prioridad sobre ese archivo.
+  identity:
+    <<: *servicio
+    build:
+      context: .
+      target: identity
+    image: comondurismo-identity:release
+    container_name: comondurismo-identity
+    env_file: ${IDENTITY_ENV_FILE:-./env/identity.env}
+    environment:
+      PORT: "50310"
+      # Para una base administrada, define IDENTITY_DATABASE_URL en .env (con sslmode=require).
+      DATABASE_URL: ${IDENTITY_DATABASE_URL:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_PRIVATE_KEY_FILE: /run/secrets/jwt-private.pem
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${IDENTITY_PORT:-50310}:50310"
+    volumes:
+      # Clave privada de firma de tokens, solo lectura. Se genera una vez con /genkey y no se versiona.
+      - ${JWT_KEY_FILE:-./secrets/jwt-private.pem}:/run/secrets/jwt-private.pem:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ---- Servicio de contenido ----
+  # Catalogo turistico, negocios, multimedia, busqueda y sincronizacion. Verifica los tokens con
+  # el JWKS de identidad (red interna, sin pasar por nginx).
+  content:
+    <<: *servicio
+    build:
+      context: .
+      target: content
+    image: comondurismo-content:release
+    container_name: comondurismo-content
+    env_file: ${CONTENT_ENV_FILE:-./env/content.env}
+    environment:
+      PORT: "50311"
+      # Para una base administrada, define CONTENT_DATABASE_URL en .env (con sslmode=require).
+      DATABASE_URL: ${CONTENT_DATABASE_URL:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_CONTENT_DB:-comondurismo_content}?sslmode=disable}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      IDENTITY_JWKS_URL: http://comondurismo-identity:50310/.well-known/jwks.json
+      OBJECT_STORE_ENDPOINT: storage:9000
+      OBJECT_STORE_ACCESS_KEY: ${S3_ACCESS_KEY}
+      OBJECT_STORE_SECRET_KEY: ${S3_SECRET_KEY}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${CONTENT_PORT:-50311}:50311"
+    # Las cargas de archivos grandes se escriben temporalmente aqui. Debe caber el video mas
+    # grande permitido (MEDIA_MAX_VIDEO_MB).
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      storage:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Servidor SMTP de desarrollo: captura los correos sin enviarlos a nadie. SOLO desarrollo:
+  # se activa con "docker compose --profile dev up -d". En el servidor, identidad usa un SMTP real.
   # Interfaz web: http://localhost:50303   |   SMTP: puerto 50302
   mailpit:
+    profiles: ["dev"]
     image: axllent/mailpit
     container_name: comondurismo-mailpit
     restart: unless-stopped
@@ -108,8 +198,8 @@ volumes:
   storage_data:
 
 networks:
-  # Red compartida con el servicio: tiene un nombre fijo para que otros compose
-  # (el del servicio, el del contenido...) se conecten a ella como "externa".
+  # Red compartida de todos los contenedores, con nombre fijo para que otros compose (por
+  # ejemplo los de desarrollo de cada servicio) se conecten a ella como "externa".
   comondurismo-network:
     name: comondurismo-network
     driver: bridge

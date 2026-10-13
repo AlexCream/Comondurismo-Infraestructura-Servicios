@@ -1,0 +1,4 @@
+# El contexto de construccion solo necesita bin/. Todo lo demas queda fuera de la imagen,
+# en especial los secretos.
+*
+!bin/

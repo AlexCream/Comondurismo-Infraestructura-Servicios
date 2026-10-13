@@ -1,0 +1,2 @@
+content commit=c676c20da3b3 compilado=2026-10-13T16:28:44Z arquitectura=amd64 base=golang:1.26-alpine
+identity commit=181bd98ca649 compilado=2026-10-13T16:28:38Z arquitectura=amd64 base=golang:1.26-alpine

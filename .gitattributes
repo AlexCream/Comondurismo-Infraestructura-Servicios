@@ -1,0 +1,8 @@
+# Los binarios y los hashes no deben tocarse al clonar en Windows (autocrlf): un CRLF en
+# SHA256SUMS hace fallar la verificacion, y un binario modificado no arranca.
+bin/** -text
+bin/**/SHA256SUMS text eol=lf
+bin/**/VERSION text eol=lf
+*.sh text eol=lf
+*.conf text eol=lf
+Dockerfile text eol=lf
