@@ -117,8 +117,11 @@ ARQUITECTURA=arm64 scripts/compilar-binarios.sh
 
 Cada servicio tiene su propio `compose.yml` para desarrollar con el código (`docker compose up -d
 --build` en su repositorio). **No lo combines con este compose**: ambos usan los nombres de
-contenedor `comondurismo-identity` y `comondurismo-content`. Mailpit (correo falso) solo se levanta
-con `docker compose --profile dev up -d`.
+contenedor `comondurismo-identity` y `comondurismo-content`.
+
+**Correo:** sale por el SMTP que configures en `env/identity.env`. Si dejas `SMTP_HOST` vacío no se envía
+nada y los enlaces de verificación quedan en el log del servicio (`docker logs comondurismo-identity`),
+solo para desarrollo.
 
 ## Puertos (rango de Comondurismo: 50300–50400)
 
@@ -126,7 +129,6 @@ con `docker compose --profile dev up -d`.
 |---|---|---|---|
 | PostgreSQL | `postgres:5432` | `127.0.0.1:50300` | `POSTGRES_PORT` |
 | Redis | `redis:6379` | `127.0.0.1:50301` | `REDIS_PORT` |
-| Mailpit (solo `--profile dev`) | `mailpit:1025` / `8025` | `127.0.0.1:50302` / `50303` | `MAILPIT_*_PORT` |
 | Almacenamiento S3 (API / consola) | `storage:9000` / `9001` | `127.0.0.1:50304` / `50305` | `S3_API_PORT`, `S3_CONSOLE_PORT` |
 | Identidad | `comondurismo-identity:50310` | `127.0.0.1:50310` | `IDENTITY_PORT` |
 | Contenido | `comondurismo-content:50311` | `127.0.0.1:50311` | `CONTENT_PORT` |

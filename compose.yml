@@ -3,7 +3,6 @@
 #   infraestructura    PostgreSQL/PostGIS, Redis y almacenamiento de objetos compatible con S3 (RustFS)
 #   identity           servicio de identidad  (puerto 50310)
 #   content            servicio de contenido  (puerto 50311)
-#   mailpit            correo falso, SOLO desarrollo (perfil "dev")
 #
 # Los servicios NO se compilan aqui: se construyen copiando los binarios de bin/ a una imagen
 # minima (Dockerfile). Los binarios los genera scripts/compilar-binarios.sh en la maquina de
@@ -177,20 +176,6 @@ services:
         condition: service_started
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-  # Servidor SMTP de desarrollo: captura los correos sin enviarlos a nadie. SOLO desarrollo:
-  # se activa con "docker compose --profile dev up -d". En el servidor, identidad usa un SMTP real.
-  # Interfaz web: http://localhost:50303   |   SMTP: puerto 50302
-  mailpit:
-    profiles: ["dev"]
-    image: axllent/mailpit
-    container_name: comondurismo-mailpit
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${MAILPIT_SMTP_PORT:-50302}:1025"
-      - "127.0.0.1:${MAILPIT_UI_PORT:-50303}:8025"
-    networks:
-      - comondurismo-network
 
 volumes:
   postgres_data:
