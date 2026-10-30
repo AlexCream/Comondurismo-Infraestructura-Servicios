@@ -35,7 +35,7 @@ declare -A REPO=( [identidad]="$REPO_IDENTIDAD" [contenido]="$REPO_CONTENIDO" )
 declare -A CARPETA=( [identidad]="identity" [contenido]="content" )
 declare -A ESPERADOS=(
   [identidad]="api migrate genkey grantrole healthcheck"
-  [contenido]="api migrate healthcheck"
+  [contenido]="api migrate healthcheck rebuild-thumbnails"
 )
 
 error() { echo "ERROR: $*" >&2; exit 1; }

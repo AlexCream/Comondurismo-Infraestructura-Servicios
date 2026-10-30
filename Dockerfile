@@ -15,7 +15,7 @@
 #
 # Ejecutables en la raiz de cada imagen:
 #   identity: /api (comando por defecto)  /migrate  /genkey  /grantrole  /healthcheck
-#   content:  /api (comando por defecto)  /migrate  /healthcheck
+#   content:  /api (comando por defecto)  /migrate  /healthcheck  /rebuild-thumbnails
 
 # ---- Verificacion de integridad ----
 # Falla la construccion si falta un binario o si no coincide con bin/<arquitectura>/SHA256SUMS
