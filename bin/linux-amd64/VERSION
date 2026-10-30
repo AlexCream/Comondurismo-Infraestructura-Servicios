@@ -1,2 +1,2 @@
-content commit=3503a697f916 compilado=2026-10-30T17:51:01Z arquitectura=amd64 base=golang:1.26-alpine
-identity commit=9efa2af3ede4 compilado=2026-10-30T17:45:19Z arquitectura=amd64 base=golang:1.26-alpine
+content commit=2e879f6a425b compilado=2026-10-30T22:47:38Z arquitectura=amd64 base=golang:1.26-alpine
+identity commit=8fe93f81f42b compilado=2026-10-30T22:47:05Z arquitectura=amd64 base=golang:1.26-alpine
