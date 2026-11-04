@@ -17,12 +17,18 @@
 #   cp .env.example .env                                  # secretos de la infraestructura
 #   cp env/identity.env.example env/identity.env          # configuracion de identidad
 #   cp env/content.env.example  env/content.env           # configuracion de contenido
+#   cp env/monitor.env.example  env/monitor.env           # configuracion del monitoreo
 #   docker compose build
 #   docker compose run --rm identity /genkey > secrets/jwt-private.pem
 #   docker compose up -d postgres redis storage
 #   docker compose run --rm identity /migrate up
 #   docker compose run --rm content  /migrate up
+#   docker compose run --rm monitor  /migrate up
 #   docker compose up -d
+#
+# La base del monitor (comondurismo_monitor) la crea postgres/initdb solo en un volumen nuevo. Si
+# Postgres ya tenia datos, creala una vez a mano:
+#   docker exec comondurismo-postgres psql -U <POSTGRES_USER> -d postgres -c "CREATE DATABASE comondurismo_monitor"
 
 name: comondurismo-infra
 
@@ -161,6 +167,8 @@ services:
       OBJECT_STORE_ENDPOINT: storage:9000
       OBJECT_STORE_ACCESS_KEY: ${S3_ACCESS_KEY}
       OBJECT_STORE_SECRET_KEY: ${S3_SECRET_KEY}
+      # /api/v1/manage/system/... se reenvia al monitor por la red interna.
+      MONITOR_URL: http://comondurismo-monitor:50312
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${CONTENT_PORT:-50311}:50311"
     # Las cargas de archivos grandes se escriben temporalmente aqui. Debe caber el video mas
@@ -177,6 +185,59 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # Proxy de solo lectura del socket de Docker. El monitor nunca toca el socket: le pregunta
+  # a este proxy, que solo deja pasar GET de contenedores (estado, estadisticas, logs) e
+  # informacion del anfitrion. Vive en una red interna sin salida y sin puertos publicados.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    container_name: comondurismo-docker-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      INFO: 1
+      POST: 0
+      # Sin esto registra cada peticion del monitor, y el monitor guardaria esas lineas.
+      LOG_LEVEL: warning
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - comondurismo-monitor
+
+  # Monitoreo: consumo de recursos y logs de los contenedores de este proyecto (solo los de
+  # comondurismo-infra, aunque el anfitrion tenga otros). Sin puerto publicado: el panel lo
+  # consulta a traves de contenido (/api/v1/manage/system/...).
+  monitor:
+    <<: *servicio
+    build:
+      context: .
+      target: monitor
+    image: comondurismo-monitor:release
+    container_name: comondurismo-monitor
+    env_file: ${MONITOR_ENV_FILE:-./env/monitor.env}
+    environment:
+      PORT: "50312"
+      DATABASE_URL: ${MONITOR_DATABASE_URL:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_MONITOR_DB:-comondurismo_monitor}?sslmode=disable}
+      DOCKER_HOST: tcp://comondurismo-docker-proxy:2375
+      COMPOSE_PROJECT: comondurismo-infra
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      IDENTITY_JWKS_URL: http://comondurismo-identity:50310/.well-known/jwks.json
+      OBJECT_STORE_ENDPOINT: storage:9000
+      OBJECT_STORE_ACCESS_KEY: ${S3_ACCESS_KEY}
+      OBJECT_STORE_SECRET_KEY: ${S3_SECRET_KEY}
+    networks:
+      - comondurismo-network
+      - comondurismo-monitor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      storage:
+        condition: service_started
+      docker-proxy:
+        condition: service_started
+
 volumes:
   postgres_data:
   redis_data:
@@ -188,3 +249,8 @@ networks:
   comondurismo-network:
     name: comondurismo-network
     driver: bridge
+
+  # Red interna del monitor con el proxy de Docker: sin salida a internet ni a otras redes.
+  comondurismo-monitor:
+    name: comondurismo-monitor
+    internal: true

@@ -58,3 +58,22 @@ EXPOSE 50311
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
   CMD ["/healthcheck"]
 CMD ["/api"]
+
+# ---- Monitoreo ----
+# Sin puerto publico: lo consulta el servicio de contenido por la red interna. Lee Docker a
+# traves de docker-proxy (solo GET), nunca del socket directamente.
+FROM base AS monitor
+
+LABEL org.opencontainers.image.title="comondurismo-monitor" \
+      org.opencontainers.image.description="Servicio de monitoreo de Comondurismo (binario precompilado)" \
+      org.opencontainers.image.source="https://github.com/AlexCream/Comondurismo-Monitoreo-API"
+
+COPY --from=verificar --chmod=0755 /bin-src/monitor/ /
+
+ENV PORT=50312
+EXPOSE 50312
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["/healthcheck"]
+
+CMD ["/api"]

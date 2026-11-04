@@ -5,14 +5,15 @@
 # Go. Los binarios se compilan aqui, en la maquina de desarrollo, a partir de los repositorios de
 # cada servicio (clonados junto a este), y se versionan en bin/linux-<arquitectura>/.
 #
-#   scripts/compilar-binarios.sh                 # identidad y contenido, linux/amd64
-#   scripts/compilar-binarios.sh identidad       # solo uno (identidad | contenido)
+#   scripts/compilar-binarios.sh                 # identidad, contenido y monitoreo, linux/amd64
+#   scripts/compilar-binarios.sh identidad       # solo uno (identidad | contenido | monitoreo)
 #   ARQUITECTURA=arm64 scripts/compilar-binarios.sh
 #   scripts/compilar-binarios.sh --verificar     # solo comprueba bin/ con SHA256SUMS (sin Docker)
 #
 # Variables opcionales:
 #   REPO_IDENTIDAD   ruta del repositorio de identidad  (defecto ../Comondurismo-Api-Identidad)
 #   REPO_CONTENIDO   ruta del repositorio de contenido  (defecto ../Comondurismo-Api-Contenido)
+#   REPO_MONITOREO   ruta del repositorio de monitoreo  (defecto ../Comondurismo-Api-Monitoreo)
 #   ARQUITECTURA     amd64 (defecto) o arm64
 #   PERMITIR_CAMBIOS=1  compila aunque el repositorio del servicio tenga cambios sin commit
 #
@@ -25,17 +26,19 @@ cd "$(dirname "$0")/.."
 ARQUITECTURA="${ARQUITECTURA:-amd64}"
 REPO_IDENTIDAD="${REPO_IDENTIDAD:-../Comondurismo-Api-Identidad}"
 REPO_CONTENIDO="${REPO_CONTENIDO:-../Comondurismo-Api-Contenido}"
+REPO_MONITOREO="${REPO_MONITOREO:-../Comondurismo-Api-Monitoreo}"
 
 DESTINO="bin/linux-${ARQUITECTURA}"
 SUMAS="${DESTINO}/SHA256SUMS"
 VERSION="${DESTINO}/VERSION"
 
 # nombre corto -> carpeta dentro de bin/ , repositorio, binarios esperados
-declare -A REPO=( [identidad]="$REPO_IDENTIDAD" [contenido]="$REPO_CONTENIDO" )
-declare -A CARPETA=( [identidad]="identity" [contenido]="content" )
+declare -A REPO=( [identidad]="$REPO_IDENTIDAD" [contenido]="$REPO_CONTENIDO" [monitoreo]="$REPO_MONITOREO" )
+declare -A CARPETA=( [identidad]="identity" [contenido]="content" [monitoreo]="monitor" )
 declare -A ESPERADOS=(
   [identidad]="api migrate genkey grantrole healthcheck"
   [contenido]="api migrate healthcheck rebuild-thumbnails"
+  [monitoreo]="api migrate healthcheck"
 )
 
 error() { echo "ERROR: $*" >&2; exit 1; }
@@ -52,7 +55,7 @@ fi
 
 SERVICIOS=("${1:-todos}")
 if [ "${SERVICIOS[0]}" = "todos" ]; then
-  SERVICIOS=(identidad contenido)
+  SERVICIOS=(identidad contenido monitoreo)
 fi
 
 command -v docker >/dev/null || error "Docker no esta instalado o no esta en el PATH"
@@ -74,11 +77,11 @@ quitar_lineas() { # archivo texto
 }
 
 for svc in "${SERVICIOS[@]}"; do
-  [ -n "${REPO[$svc]:-}" ] || error "servicio desconocido '$svc' (usa: identidad | contenido)"
+  [ -n "${REPO[$svc]:-}" ] || error "servicio desconocido '$svc' (usa: identidad | contenido | monitoreo)"
   repo="${REPO[$svc]}"
   carpeta="${CARPETA[$svc]}"
 
-  [ -f "$repo/Dockerfile" ] || error "no encuentro $repo/Dockerfile (ajusta REPO_IDENTIDAD / REPO_CONTENIDO)"
+  [ -f "$repo/Dockerfile" ] || error "no encuentro $repo/Dockerfile (ajusta REPO_IDENTIDAD / REPO_CONTENIDO / REPO_MONITOREO)"
   grep -q "AS binaries" "$repo/Dockerfile" || error "el Dockerfile de $repo no tiene la etapa 'binaries'; actualiza ese repositorio"
 
   commit="$(git -C "$repo" rev-parse --short=12 HEAD)"
