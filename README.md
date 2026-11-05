@@ -2,16 +2,20 @@
 
 **Es el único repositorio que se descarga en el servidor.** Levanta todo el sistema con
 `docker compose`: PostgreSQL/PostGIS, Redis, almacenamiento de objetos (S3), el servicio de
-identidad y el servicio de contenido.
+identidad, el servicio de contenido, el monitoreo y la **interfaz web**.
 
 Aquí **no hay código fuente**: los servicios viajan como **binarios ya compilados** en `bin/`, y la
 imagen de cada contenedor se arma copiándolos a una base mínima (`Dockerfile`, sin compilador).
 Los binarios se generan con Docker en la máquina de desarrollo (`scripts/compilar-binarios.sh`).
+La interfaz web viaja igual, **ya compilada** en `web/dist` (`scripts/compilar-web.sh`), y la sirve
+un contenedor nginx.
 
 ```
-bin/linux-amd64/       binarios estáticos (identity/ y content/) + SHA256SUMS + VERSION
+bin/linux-amd64/       binarios estáticos (identity/, content/, monitor/) + SHA256SUMS + VERSION
+web/dist/              interfaz web compilada (estáticos) + web/SHA256SUMS + web/VERSION
+web/nginx.conf         nginx del contenedor web (rutas de la SPA y caché)
 env/                   plantillas de configuración de cada servicio (se copian a *.env)
-scripts/               compilar-binarios.sh
+scripts/               compilar-binarios.sh, compilar-web.sh
 postgres/initdb/       crea la base de contenido la primera vez
 Dockerfile             imágenes identity y content a partir de bin/ (verifica los hashes)
 compose.yml            todo el sistema
@@ -55,6 +59,7 @@ docker compose run --rm identity /grantrole -email correo@ejemplo.com -role ADMI
 
 # 6. Comprobar (por el propio servidor; el acceso externo lo da nginx)
 curl http://127.0.0.1:50310/health && curl http://127.0.0.1:50311/health
+curl http://127.0.0.1:50322/health                # interfaz web
 docker compose ps
 ```
 
@@ -83,9 +88,11 @@ docker compose run --rm content  /migrate up
 docker compose up -d                              # recrea solo lo que cambió
 ```
 
-`bin/linux-amd64/VERSION` dice de qué commit de cada servicio salió el binario desplegado.
+`bin/linux-amd64/VERSION` dice de qué commit de cada servicio salió el binario desplegado, y
+`web/VERSION` de qué commit de `Comondurismo-Web` salió la interfaz web.
 **Regresar a la versión anterior:** `git checkout <commit-anterior> -- bin env/*.example`,
 `docker compose build && docker compose up -d` (si hubo migraciones, restaura el respaldo de la base).
+Para la web: `git checkout <commit-anterior> -- web && docker compose up -d --build web`.
 
 ---
 
@@ -113,6 +120,28 @@ ARQUITECTURA=arm64 scripts/compilar-binarios.sh
 > En el servidor usa `git clone --depth 1`. Si crece demasiado, mover `bin/` a Git LFS o a releases
 > de GitHub no cambia el resto del flujo.
 
+## En desarrollo: compilar la interfaz web
+
+Con `Comondurismo-Web-App` clonado junto a este y Docker encendido:
+
+```bash
+scripts/compilar-web.sh                       # exporta origin/main del repositorio web
+REF=origin/beta scripts/compilar-web.sh       # otra rama, etiqueta o commit
+scripts/compilar-web.sh --verificar           # comprueba web/dist con web/SHA256SUMS (sin Docker)
+git add web && git commit
+```
+
+> En Windows, `web/dist/assets/node_modules/...` supera los 260 caracteres de ruta: activa
+> `git config core.longpaths true` en este repositorio antes del `git add` (en Linux no hace falta).
+
+- Exporta el commit con `git archive` (no toca tu copia de trabajo ni tu rama) y compila dentro de
+  Docker con Node 22 y `pnpm install --frozen-lockfile` + `expo export --platform web`.
+- La URL de la API se incrusta al compilar: por defecto la del código
+  (`https://comondurismo.cdconstitucion.tecnm.mx/api/v1`); otra con
+  `EXPO_PUBLIC_API_URL=https://otro.dominio/api/v1 scripts/compilar-web.sh`.
+- En el servidor la web se actualiza como los servicios: `git pull && docker compose up -d --build web`.
+  Escucha en `127.0.0.1:50322` y el nginx del anfitrión le reenvía `location /` (`Despliegue_y_Nginx`).
+
 ## Desarrollo sin binarios
 
 Cada servicio tiene su propio `compose.yml` para desarrollar con el código (`docker compose up -d
@@ -132,6 +161,7 @@ solo para desarrollo.
 | Almacenamiento S3 (API / consola) | `storage:9000` / `9001` | `127.0.0.1:50304` / `50305` | `S3_API_PORT`, `S3_CONSOLE_PORT` |
 | Identidad | `comondurismo-identity:50310` | `127.0.0.1:50310` | `IDENTITY_PORT` |
 | Contenido | `comondurismo-content:50311` | `127.0.0.1:50311` | `CONTENT_PORT` |
+| Interfaz web | `comondurismo-web:8080` | `127.0.0.1:50322` | `WEB_PORT` |
 
 `BIND_ADDRESS` (servicios) y `S3_BIND_ADDRESS` (API S3) abren esos puertos a toda la red con
 `0.0.0.0`: solo para pruebas en un laboratorio, nunca en producción. En Windows, el sistema puede

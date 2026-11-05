@@ -9,6 +9,7 @@
 #
 #   docker build --target identity -t comondurismo-identity:release .
 #   docker build --target content  -t comondurismo-content:release  .
+#   docker build --target web      -t comondurismo-web:release      .   # interfaz web (web/dist)
 #
 # (compose.yml ya lo hace: "docker compose build"). Para otra arquitectura:
 #   docker build --platform linux/arm64 --target identity ...   # requiere bin/linux-arm64/
@@ -77,3 +78,22 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
   CMD ["/healthcheck"]
 
 CMD ["/api"]
+
+# ---- Interfaz web ----
+# Archivos estaticos ya compilados (web/dist, los genera scripts/compilar-web.sh) servidos por
+# nginx sin privilegios (uid 101, puerto 8080). Se verifica web/SHA256SUMS igual que los binarios.
+FROM alpine:3.21 AS verificar-web
+WORKDIR /web
+COPY web/SHA256SUMS ./
+COPY web/dist/ ./dist/
+RUN sha256sum -c -s SHA256SUMS
+
+FROM nginxinc/nginx-unprivileged:1.28-alpine AS web
+LABEL org.opencontainers.image.title="comondurismo-web" \
+      org.opencontainers.image.description="Interfaz web de Comondurismo (archivos estaticos precompilados)" \
+      org.opencontainers.image.source="https://github.com/AlexCream/Comondurismo-Web"
+COPY web/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=verificar-web /web/dist/ /usr/share/nginx/html/
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]

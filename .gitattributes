@@ -6,3 +6,7 @@ bin/**/VERSION text eol=lf
 *.sh text eol=lf
 *.conf text eol=lf
 Dockerfile text eol=lf
+# Igual con la interfaz web compilada: sus hashes se calculan sobre los archivos tal cual.
+web/dist/** -text
+web/SHA256SUMS text eol=lf
+web/VERSION text eol=lf

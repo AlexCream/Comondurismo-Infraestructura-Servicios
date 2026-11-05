@@ -1,4 +1,5 @@
-# El contexto de construccion solo necesita bin/. Todo lo demas queda fuera de la imagen,
+# El contexto de construccion solo necesita bin/ y web/. Todo lo demas queda fuera de la imagen,
 # en especial los secretos.
 *
 !bin/
+!web/

@@ -3,6 +3,7 @@
 #   infraestructura    PostgreSQL/PostGIS, Redis y almacenamiento de objetos compatible con S3 (RustFS)
 #   identity           servicio de identidad  (puerto 50310)
 #   content            servicio de contenido  (puerto 50311)
+#   web                interfaz web: archivos estaticos de web/dist con nginx (puerto 50322)
 #
 # Los servicios NO se compilan aqui: se construyen copiando los binarios de bin/ a una imagen
 # minima (Dockerfile). Los binarios los genera scripts/compilar-binarios.sh en la maquina de
@@ -184,6 +185,22 @@ services:
         condition: service_started
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  # ---- Interfaz web ----
+  # Archivos estaticos de web/dist (los genera scripts/compilar-web.sh) servidos por nginx. El
+  # nginx del anfitrion reenvia aqui todo lo que no es /api/ ni /media/ (nota "Despliegue_y_Nginx").
+  web:
+    <<: *servicio
+    build:
+      context: .
+      target: web
+    image: comondurismo-web:release
+    container_name: comondurismo-web
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-50322}:8080"
+    # nginx escribe su pid y archivos temporales en /tmp (el resto del sistema es de solo lectura).
+    tmpfs:
+      - /tmp:size=16m,mode=1777
 
   # Proxy de solo lectura del socket de Docker. El monitor nunca toca el socket: le pregunta
   # a este proxy, que solo deja pasar GET de contenedores (estado, estadisticas, logs) e
